@@ -1,0 +1,19 @@
+
+models:
+  - type: main
+    provider: self_hosted        # or "openrouter" or "openai"
+    model: my-guard-model-v1
+    parameters:
+      temperature: 0.3
+      max_tokens: 400
+
+  - type: fact_judge
+    provider: openrouter
+    model: meta-llama/llama-3.1-70b-instruct
+    parameters:
+      temperature: 0.0
+      max_tokens: 256
+
+  - type: embeddings
+    provider: openai
+    model: text-embedding-3-small
