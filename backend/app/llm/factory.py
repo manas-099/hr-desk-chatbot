@@ -1,38 +1,38 @@
-
-# backend/app/llms/factory.py
+# backend/app/llm/factory.py   (adjust path if your folder is app/llms/)
 
 from functools import lru_cache
 
 from langchain_core.language_models.llms import LLM
 
 from app.core.config import ModelSpec, get_model_spec
-from app.llm.base import build_http_llm
+from app.llm.base import build_http_llm   # adjust import path to match your actual folder name
 
 
 def build_llm(spec: ModelSpec) -> LLM:
     """
-    Single entry point: takes a resolved ModelSpec and returns a ready-to-use
-    LangChain LLM instance. This is the ONLY function that knows how to turn
-    a provider name into an actual client object.
+    Takes a resolved ModelSpec and returns a ready-to-use LangChain LLM.
+    Both self-hosted and OpenRouter use engine: openai with a custom base_url,
+    so they're handled the same way here — distinguished only by whether
+    api_url is set.
     """
-    if spec.provider in ("self_hosted", "openrouter"):
-        # Both are OpenAI-compatible /chat/completions endpoints, just different
-        # base URLs/keys — already resolved inside spec by config.py.
+    if spec.engine == "openai" and spec.api_url:
+        # Self-hosted or OpenRouter — both OpenAI-compatible endpoints
         return build_http_llm(spec)
 
-    if spec.provider == "openai":
-        pass
+    if spec.engine == "openai":
+        # Real OpenAI, no custom base_url
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=spec.model_name,
+            api_key=spec.api_key,
+            temperature=spec.temperature,
+            max_tokens=spec.max_tokens,
+        )
 
-
-    raise ValueError(f"No LLM builder registered for provider '{spec.provider}'")
+    raise ValueError(f"No LLM builder registered for engine '{spec.engine}'")
 
 
 @lru_cache
 def get_llm(role: str = "main") -> LLM:
-    """
-    What the rest of the app actually calls: get_llm("main"), get_llm("fact_judge").
-    Cached per role so you're not rebuilding an HTTP client / ChatOpenAI instance
-    on every single request — same LLM object gets reused across the app's lifetime.
-    """
     spec = get_model_spec(role)
     return build_llm(spec)
