@@ -95,3 +95,13 @@ python -m tests.test_retrieval_smoke
   is worth trying if unexplained bugs show up later.
 
 
+  1. Fix self_check_input (real jailbreak blocking)     ← next, most impactful
+2. Bump timeout, re-run full smoke test
+3. Write a fact-checking test (deliberately ask something 
+   the KB contradicts, confirm self_check_facts catches it)
+4. Build eval_cases.yaml + runner → get real pass/fail numbers
+5. Wire FastAPI (chat.py, main.py) → real running service
+6. Minimal frontend chat widget
+7. Docker + README polish for final resume-ready state
+
+

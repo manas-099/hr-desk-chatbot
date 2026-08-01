@@ -15,3 +15,5 @@ notes
 backend/scripts/
 
 .cache/
+## logs 
+backend/logs/
