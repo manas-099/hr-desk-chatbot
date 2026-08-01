@@ -1,0 +1,39 @@
+# Canonical User Intents
+
+define user ask about pto
+  "How many PTO days do I have?"
+  "What is the vacation policy?"
+  "Can I roll over unused PTO?"
+
+define user ask about another employee
+  "What is Sarah's salary?"
+  "Did John get a promotion?"
+
+define user ask for legal advice
+  "Can I sue the company?"
+  "What are my legal rights?"
+
+define user ask for medical advice
+  "What medication should I take?"
+  "Do I have a disability?"
+
+define bot inform unauthorized employee data
+  "I cannot provide information about individual employees. If you have a legitimate business need, please contact HR directly."
+
+define bot inform no legal advice
+  "I cannot provide legal advice. If you have legal questions, please consult with an attorney or contact our Employee Assistance Program for referrals."
+
+define bot inform no medical advice
+  "I cannot provide medical advice or diagnoses. Please consult a healthcare professional or contact our Employee Assistance Program."
+
+define flow another employee inquiry
+  user ask about another employee
+  bot inform unauthorized employee data
+
+define flow legal advice inquiry
+  user ask for legal advice
+  bot inform no legal advice
+
+define flow medical advice inquiry
+  user ask for medical advice
+  bot inform no medical advice

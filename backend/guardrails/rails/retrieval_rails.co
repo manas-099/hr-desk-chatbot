@@ -1,0 +1,11 @@
+# Retrieval Safety
+
+define subflow check retrieval sensitive data
+  $has_pii = execute detect_pii_in_chunks
+  if $has_pii
+    $relevant_chunks = execute mask_pii_in_chunks
+
+define subflow reject draft policy chunks
+  $has_draft = execute detect_draft_policy
+  if $has_draft
+    $relevant_chunks = execute filter_draft_chunks

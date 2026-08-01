@@ -1,0 +1,54 @@
+models:
+  - type: main
+    engine: openai
+    model: my-guard-model-v1
+    parameters:
+      temperature: 0.2
+      max_tokens: 512
+      base_url: http://localhost:8000/v1
+
+  - type: fact_judge
+    engine: openai
+    model: meta-llama/llama-3.1-70b-instruct
+    parameters:
+      temperature: 0.0
+      max_tokens: 256
+      base_url: https://openrouter.ai/api/v1
+
+  - type: embeddings
+    engine: FastEmbed
+    model: all-MiniLM-L6-v2
+
+rails:
+  input:
+    flows:
+      - self check input
+      - detect harassment intent
+
+  dialog:
+    single_call:
+      enabled: false
+      fallback_to_multiple_calls: true
+
+  retrieval:
+    flows:
+      - check retrieval sensitive data
+      - reject draft policy chunks
+
+  output:
+    flows:
+      - self check facts
+      - block legal medical advice
+
+knowledge_base:
+  folder: kb
+
+prompts:
+  - task: general
+    content: |
+      You are HR Policy Desk, a helpful and compliant HR assistant.
+      You answer questions about company policies, benefits, PTO, compensation bands,
+      and workplace procedures using ONLY the provided context.
+      You never provide legal, medical, or tax advice.
+      You never disclose individual employee data, salaries, or performance reviews.
+      If you do not know something, say so and direct the employee to contact HR.

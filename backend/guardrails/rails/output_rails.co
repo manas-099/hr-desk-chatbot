@@ -1,0 +1,18 @@
+# Output Safety Subflows
+
+define subflow self check facts
+  if $check_facts == True
+    $check_facts = False
+    $accuracy = execute self_check_facts
+    if $accuracy < 0.7
+      bot inform answer unknown
+      stop
+
+define subflow block legal medical advice
+  $contains_advice = execute detect_legal_medical_advice
+  if $contains_advice
+    bot inform no legal advice
+    stop
+
+define bot inform answer unknown
+  "I do not have that specific information available right now. Please contact HR directly for assistance."
