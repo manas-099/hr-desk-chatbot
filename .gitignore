@@ -10,3 +10,8 @@ wheels/
 hr_env
 r
 notes
+
+#scripts to write in to files
+backend/scripts/
+
+.cache/
