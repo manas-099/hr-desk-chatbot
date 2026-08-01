@@ -1,5 +1,6 @@
-# backend/app/llms/base.py
+# backend/app/llm/base.py
 
+import logging
 from typing import Any, List, Optional
 
 import requests
@@ -9,13 +10,13 @@ from langchain_core.language_models.llms import LLM
 from app.core.config import ModelSpec
 
 TIMEOUT_SECONDS = 30
+logger = logging.getLogger("app")
 
 
 class HTTPChatLLM(LLM):
     """
     Generic LangChain LLM wrapper for any OpenAI-compatible /chat/completions
-    endpoint — covers BOTH your self-hosted model and OpenRouter, since both
-    speak the same request/response shape. Only api_url/api_key/model_name differ.
+    endpoint. Used for both self-hosted models and OpenRouter.
     """
 
     model_name: str
@@ -23,6 +24,7 @@ class HTTPChatLLM(LLM):
     api_key: Optional[str] = None
     temperature: float = 0.2
     max_tokens: int = 512
+    send_model_field: bool = True
 
     @property
     def _llm_type(self) -> str:
@@ -39,38 +41,43 @@ class HTTPChatLLM(LLM):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        url = self.api_url.rstrip("/") + "/chat/completions"
+
         payload = {
-            "model": self.model_name,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        if self.send_model_field:
+            payload["model"] = self.model_name
         if stop:
             payload["stop"] = stop
 
+        logger.info(f"[HTTPChatLLM] POST {url} | model_field_sent={self.send_model_field}")
+        print(f"\n>>> [HTTPChatLLM] POST {url}")
+        print(f">>> [HTTPChatLLM] payload keys: {list(payload.keys())}")
+
         try:
-            resp = requests.post(
-                self.api_url, headers=headers, json=payload, timeout=TIMEOUT_SECONDS
-            )
+            resp = requests.post(url, headers=headers, json=payload, timeout=TIMEOUT_SECONDS)
+            print(f">>> [HTTPChatLLM] Status: {resp.status_code}")
+            print(f">>> [HTTPChatLLM] Response body (first 500 chars): {resp.text[:500]}")
             resp.raise_for_status()
             result = resp.json()
             return result["choices"][0]["message"]["content"]
         except Exception as e:
-            # Never let a raw exception blow up a rail mid-flow — surface it
-            # as text so self_check_facts/output rails can still run and the
-            # failure gets caught by fact-checking rather than crashing the app.
+            logger.error(f"[HTTPChatLLM] Call failed: {e}")
+            print(f">>> [HTTPChatLLM] FAILED: {e}")
             return f"[LLM call failed: {e}]"
 
 
 def build_http_llm(spec: ModelSpec) -> HTTPChatLLM:
     if not spec.api_url:
-        raise ValueError(
-            f"ModelSpec for role '{spec.role}' (provider={spec.provider}) has no api_url set."
-        )
+        raise ValueError(f"ModelSpec for role '{spec.role}' has no api_url set.")
     return HTTPChatLLM(
         model_name=spec.model_name,
         api_url=spec.api_url,
         api_key=spec.api_key,
         temperature=spec.temperature,
         max_tokens=spec.max_tokens,
+        send_model_field=spec.send_model_field,
     )

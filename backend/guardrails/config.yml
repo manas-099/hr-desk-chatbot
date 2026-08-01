@@ -1,11 +1,14 @@
+
+
 models:
   - type: main
     engine: openai
-    model: my-guard-model-v1
+    model: medha
     parameters:
       temperature: 0.2
       max_tokens: 512
-      base_url: http://localhost:8000/v1
+      base_url: http://164.52.192.196:8001/v1
+      send_model_field: false
 
   - type: fact_judge
     engine: openai
