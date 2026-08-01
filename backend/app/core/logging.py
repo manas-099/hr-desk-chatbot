@@ -1,109 +1,85 @@
 # backend/app/core/logging.py
 
-import json
 import logging
 import sys
-from contextvars import ContextVar
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
-
-from app.core.config import get_settings
-
-# ---------------------------------------------------------------------------
-# Context vars — set once per incoming request/chat turn, read by every
-# log call underneath it without having to thread session_id through every
-# function signature manually.
-# ---------------------------------------------------------------------------
-session_id_var: ContextVar[Optional[str]] = ContextVar("session_id", default=None)
-request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+from typing import Optional
 
 
-class JSONFormatter(logging.Formatter):
-    """
-    Renders each log record as one JSON line. Structured logs are what let you
-    grep/query "show me every audit line where has_pii=true" instead of
-    regexing free-text log messages.
-    """
+class ColorFormatter(logging.Formatter):
+    """Pretty, color-coded console output."""
+
+    COLORS = {
+        "DEBUG": "\033[36m",
+        "INFO": "\033[32m",
+        "WARNING": "\033[33m",
+        "ERROR": "\033[31m",
+        "CRITICAL": "\033[41m",
+    }
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
 
     def format(self, record: logging.LogRecord) -> str:
-        payload: Dict[str, Any] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-            "session_id": session_id_var.get(),
-            "request_id": request_id_var.get(),
-        }
-
-        # Anything passed via extra={...} in a log call gets merged in flat,
-        # e.g. logger.info("...", extra={"triggered_rails": [...]})
-        reserved = {
-            "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-            "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-            "created", "msecs", "relativeCreated", "thread", "threadName",
-            "processName", "process", "message",
-        }
-        for key, value in record.__dict__.items():
-            if key not in reserved and not key.startswith("_"):
-                payload[key] = value
-
+        color = self.COLORS.get(record.levelname, self.RESET)
+        timestamp = self.formatTime(record, "%H:%M:%S")
+        level = f"{color}{self.BOLD}{record.levelname:<8}{self.RESET}"
+        name = f"\033[90m{record.name}\033[0m"
+        message = record.getMessage()
+        line = f"{timestamp} | {level} | {name} | {message}"
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-
-        return json.dumps(payload, default=str)
-
-
-def _make_file_handler(path: Path) -> logging.Handler:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(path, encoding="utf-8")
-    handler.setFormatter(JSONFormatter())
-    return handler
+            line += "\n" + self.formatException(record.exc_info)
+        return line
 
 
-def setup_logging() -> None:
-    """
-    Call once at app startup (main.py). Configures two independent loggers:
+class PlainFileFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        return f"{timestamp} | {record.levelname:<8} | {record.name} | {record.getMessage()}"
 
-    - "app"   -> logs/app.log   : requests, latency, errors, rail exceptions
-    - "audit" -> logs/audit.log : compliance trail — one line per chat turn,
-                                  matching the log_hr_audit() action shape
-                                  (session_id, intent, triggered_rails, has_pii,
-                                  escalation_type)
 
-    Kept as two separate loggers/files (not one combined stream) because they
-    have different audiences and retention needs: app.log is for on-call
-    debugging and can be rotated/discarded quickly; audit.log is the
-    compliance record HR/legal may need to retain and review, so it should
-    never be mixed with noisy operational logs or accidentally dropped by a
-    debug-log filter.
-    """
-    settings = get_settings()
+def setup_logging(level: str = "INFO") -> None:
+    """Call ONCE at the top of any entrypoint. Sets up both 'app' and 'audit' loggers."""
     log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
 
-    # -- app logger --
+    # -- app logger (operational, pretty console + file) --
     app_logger = logging.getLogger("app")
-    app_logger.setLevel(settings.log_level.upper())
+    app_logger.setLevel(level.upper())
     app_logger.handlers.clear()
-    app_logger.addHandler(_make_file_handler(log_dir / "app.log"))
 
-    # also echo to stdout in development so you see it in the terminal
-    if settings.environment == "development":
-        stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setFormatter(JSONFormatter())
-        app_logger.addHandler(stream_handler)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(ColorFormatter())
+    app_logger.addHandler(console_handler)
+
+    app_file_handler = logging.FileHandler(log_dir / "app.log", encoding="utf-8")
+    app_file_handler.setFormatter(PlainFileFormatter())
+    app_logger.addHandler(app_file_handler)
 
     app_logger.propagate = False
 
-    # -- audit logger --
+    # -- audit logger (compliance trail, file only, always INFO) --
     audit_logger = logging.getLogger("audit")
-    audit_logger.setLevel(logging.INFO)  # audit lines are never debug-filtered out
+    audit_logger.setLevel(logging.INFO)
     audit_logger.handlers.clear()
-    audit_logger.addHandler(_make_file_handler(log_dir / "audit.log"))
+
+    audit_file_handler = logging.FileHandler(log_dir / "audit.log", encoding="utf-8")
+    audit_file_handler.setFormatter(PlainFileFormatter())
+    audit_logger.addHandler(audit_file_handler)
+
     audit_logger.propagate = False
+
+    app_logger.info("=" * 60)
+    app_logger.info("Logging initialized")
+    app_logger.info("=" * 60)
+
+
+def get_logger(name: str) -> logging.Logger:
+    """Standard app logger — use this in most files."""
+    return logging.getLogger(f"app.{name}")
 
 
 def get_app_logger() -> logging.Logger:
+    """Back-compat alias — same as get_logger('') essentially, returns the root app logger."""
     return logging.getLogger("app")
 
 
@@ -118,17 +94,8 @@ def log_audit_event(
     has_pii: bool = False,
     escalation_type: Optional[str] = None,
 ) -> None:
-    """
-    Single entry point for writing an audit line — mirrors the log_hr_audit()
-    action from the guardrails proposal, so it can be called directly from
-    actions.py without duplicating the field list everywhere.
-    """
+    """Single entry point for writing a compliance audit line."""
     get_audit_logger().info(
-        "hr_policy_desk_audit",
-        extra={
-            "user_intent": user_intent,
-            "triggered_rails": triggered_rails,
-            "has_pii": has_pii,
-            "escalation_type": escalation_type,
-        },
+        f"intent='{user_intent[:100]}' | triggered_rails={triggered_rails} | "
+        f"has_pii={has_pii} | escalation_type={escalation_type}"
     )

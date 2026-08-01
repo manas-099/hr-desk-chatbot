@@ -1,6 +1,5 @@
 # backend/app/llm/base.py
 
-import logging
 from typing import Any, List, Optional
 
 import requests
@@ -8,17 +7,13 @@ from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.language_models.llms import LLM
 
 from app.core.config import ModelSpec
+from app.core.logging import get_logger
 
 TIMEOUT_SECONDS = 30
-logger = logging.getLogger("app")
+logger = get_logger("llm")
 
 
 class HTTPChatLLM(LLM):
-    """
-    Generic LangChain LLM wrapper for any OpenAI-compatible /chat/completions
-    endpoint. Used for both self-hosted models and OpenRouter.
-    """
-
     model_name: str
     api_url: str
     api_key: Optional[str] = None
@@ -53,25 +48,41 @@ class HTTPChatLLM(LLM):
         if stop:
             payload["stop"] = stop
 
-        logger.info(f"[HTTPChatLLM] POST {url} | model_field_sent={self.send_model_field}")
-        print(f"\n>>> [HTTPChatLLM] POST {url}")
-        print(f">>> [HTTPChatLLM] payload keys: {list(payload.keys())}")
+        logger.info(f"→ POST {url} | prompt_len={len(prompt)} chars")
 
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=TIMEOUT_SECONDS)
-            print(f">>> [HTTPChatLLM] Status: {resp.status_code}")
-            print(f">>> [HTTPChatLLM] Response body (first 500 chars): {resp.text[:500]}")
             resp.raise_for_status()
             result = resp.json()
-            return result["choices"][0]["message"]["content"]
+            content = result["choices"][0]["message"]["content"]
+
+            logger.info(f"← {resp.status_code} | response_len={len(content)} chars")
+            return content
+
+        except requests.exceptions.Timeout:
+            logger.error(f"✗ Timeout after {TIMEOUT_SECONDS}s | {url}")
+            return "[LLM call failed: request timed out]"
+
+        except requests.exceptions.ConnectionError:
+            logger.error(f"✗ Connection refused | {url}")
+            return "[LLM call failed: could not connect to model server]"
+
+        except requests.exceptions.HTTPError:
+            logger.error(f"✗ HTTP {resp.status_code} | {url} | body: {resp.text[:200]}")
+            return f"[LLM call failed: {resp.status_code} error from server]"
+
+        except (KeyError, IndexError):
+            logger.error(f"✗ Unexpected response shape | {url} | raw: {resp.text[:200]}")
+            return "[LLM call failed: unexpected response format]"
+
         except Exception as e:
-            logger.error(f"[HTTPChatLLM] Call failed: {e}")
-            print(f">>> [HTTPChatLLM] FAILED: {e}")
+            logger.exception(f"✗ Unhandled error | {url}")
             return f"[LLM call failed: {e}]"
 
 
 def build_http_llm(spec: ModelSpec) -> HTTPChatLLM:
     if not spec.api_url:
+        logger.error(f"No api_url set for role '{spec.role}'")
         raise ValueError(f"ModelSpec for role '{spec.role}' has no api_url set.")
     return HTTPChatLLM(
         model_name=spec.model_name,

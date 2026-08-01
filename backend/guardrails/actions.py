@@ -1,139 +1,142 @@
 # backend/guardrails/actions.py
 
 import hashlib
-import logging
 import re
 from datetime import datetime
 from typing import Optional
 
 from nemoguardrails.actions import action
+from app.core.logging import get_logger
 
-logger = logging.getLogger("app")
+logger = get_logger("actions")
 
 
 def _get_user_text(context: Optional[dict]) -> str:
-    """
-    Safely pulls the user's message out of NeMo's context dict, regardless of
-    which key is populated at this stage of the flow (last_user_message is
-    often None during input rails; user_message holds the real value there).
-    Always returns a string, never None.
-    """
     if not context:
         return ""
     return (context.get("last_user_message") or context.get("user_message") or "")
 
 
 def _get_bot_text(context: Optional[dict]) -> str:
-    """Same safety pattern, for the bot's draft response during output rails."""
     if not context:
         return ""
     return (context.get("last_bot_message") or context.get("bot_message") or "")
 
 
 def _get_chunks_text(context: Optional[dict]) -> str:
-    """Same safety pattern, for retrieved KB chunks during retrieval rails."""
     if not context:
         return ""
     return context.get("relevant_chunks") or ""
 
 
-# ---------------------------------------------------------------------------
-# Input rail actions
-# ---------------------------------------------------------------------------
-
 @action()
 async def self_check_input(context: Optional[dict] = None, llm=None) -> bool:
-    """
-    Placeholder safe-default check. Replace with a real LLM call using the
-    self_check_input prompt from prompts.yml if you want model-based
-    jailbreak/PII-request detection instead of just the keyword rail below.
-    """
-    user_input = _get_user_text(context)
-    if not user_input:
+    try:
+        user_input = _get_user_text(context)
+        logger.info(f"self_check_input | checking: '{user_input[:80]}'")
+        return True  # placeholder — real LLM check pending
+    except Exception:
+        logger.exception("self_check_input | FAILED — defaulting to allow")
         return True
-    return True
 
 
 @action()
 async def detect_harassment_intent(context: Optional[dict] = None) -> bool:
-    """Keyword-based harassment/complaint detection — no LLM call needed."""
-    user_input = _get_user_text(context).lower()
-    harassment_keywords = [
-        "harassment", "harassed", "inappropriate", "uncomfortable",
-        "discrimination", "retaliation", "hostile", "bullying",
-        "sexual", "abuse", "threatened", "intimidated",
-    ]
-    return any(kw in user_input for kw in harassment_keywords)
+    try:
+        user_input = _get_user_text(context).lower()
+        harassment_keywords = [
+            "harassment", "harassed", "inappropriate", "uncomfortable",
+            "discrimination", "retaliation", "hostile", "bullying",
+            "sexual", "abuse", "threatened", "intimidated",
+        ]
+        result = any(kw in user_input for kw in harassment_keywords)
+        if result:
+            logger.warning(f"detect_harassment_intent | TRIGGERED: '{user_input[:80]}'")
+        return result
+    except Exception:
+        logger.exception("detect_harassment_intent | FAILED — defaulting to False")
+        return False
 
 
 @action()
 async def create_anonymous_ticket(type: str = "general", context: Optional[dict] = None) -> str:
-    """Mock ticket creation — swap for a real ServiceNow/Zendesk call later."""
-    session_id = context.get("session_id", "unknown") if context else "unknown"
-    ticket_id = (
-        f"HR-{hashlib.sha256(session_id.encode()).hexdigest()[:8].upper()}"
-        f"-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
-    logger.info(f"Anonymous ticket created: {ticket_id}, type={type}")
-    return ticket_id
+    try:
+        session_id = context.get("session_id", "unknown") if context else "unknown"
+        ticket_id = (
+            f"HR-{hashlib.sha256(session_id.encode()).hexdigest()[:8].upper()}"
+            f"-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        )
+        logger.info(f"create_anonymous_ticket | created {ticket_id} (type={type})")
+        return ticket_id
+    except Exception:
+        logger.exception("create_anonymous_ticket | FAILED")
+        return "HR-ERROR-TICKET"
 
-
-# ---------------------------------------------------------------------------
-# Retrieval rail actions
-# ---------------------------------------------------------------------------
 
 @action()
 async def detect_pii_in_chunks(context: Optional[dict] = None) -> bool:
-    """Checks if retrieved KB chunks contain unmasked PII markers."""
-    chunks = _get_chunks_text(context).lower()
-    sensitive_markers = [
-        "ssn", "social security", "salary:", "compensation:",
-        "employee id:", "dob:", "date of birth",
-    ]
-    return any(marker in chunks for marker in sensitive_markers)
+    try:
+        chunks = _get_chunks_text(context).lower()
+        markers = ["ssn", "social security", "salary:", "compensation:", "employee id:", "dob:", "date of birth"]
+        result = any(m in chunks for m in markers)
+        if result:
+            logger.warning("detect_pii_in_chunks | PII marker found in retrieved chunks")
+        return result
+    except Exception:
+        logger.exception("detect_pii_in_chunks | FAILED — defaulting to False")
+        return False
 
 
 @action()
 async def mask_pii_in_chunks(context: Optional[dict] = None) -> str:
-    """Masks PII patterns in retrieved chunks before the LLM ever sees them."""
-    chunks = _get_chunks_text(context)
-    chunks = re.sub(r"\b\d{3}-\d{2}-\d{4}\b", "[SSN REDACTED]", chunks)
-    chunks = re.sub(r"\$\d{1,3}(,\d{3})+(\.\d{2})?", "[COMPENSATION REDACTED]", chunks)
-    chunks = re.sub(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b", "[CARD REDACTED]", chunks)
-    return chunks
+    try:
+        chunks = _get_chunks_text(context)
+        chunks = re.sub(r"\b\d{3}-\d{2}-\d{4}\b", "[SSN REDACTED]", chunks)
+        chunks = re.sub(r"\$\d{1,3}(,\d{3})+(\.\d{2})?", "[COMPENSATION REDACTED]", chunks)
+        chunks = re.sub(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b", "[CARD REDACTED]", chunks)
+        return chunks
+    except Exception:
+        logger.exception("mask_pii_in_chunks | FAILED — returning empty string")
+        return ""
 
 
 @action()
 async def detect_draft_policy(context: Optional[dict] = None) -> bool:
-    """Detects if any retrieved chunk is marked draft/unapproved."""
-    chunks = _get_chunks_text(context).lower()
-    draft_markers = ["draft", "unapproved", "pending review", "not yet effective", "proposed"]
-    return any(marker in chunks for marker in draft_markers)
+    try:
+        chunks = _get_chunks_text(context).lower()
+        markers = ["draft", "unapproved", "pending review", "not yet effective", "proposed"]
+        result = any(m in chunks for m in markers)
+        if result:
+            logger.warning("detect_draft_policy | draft content found in retrieved chunks")
+        return result
+    except Exception:
+        logger.exception("detect_draft_policy | FAILED — defaulting to False")
+        return False
 
 
 @action()
 async def filter_draft_chunks(context: Optional[dict] = None) -> str:
-    """Strips draft-marked lines out of retrieved chunks."""
-    chunks = _get_chunks_text(context)
-    lines = chunks.split("\n")
-    filtered = [
-        line for line in lines
-        if not any(m in line.lower() for m in ["draft", "unapproved", "pending review"])
-    ]
-    return "\n".join(filtered)
+    try:
+        chunks = _get_chunks_text(context)
+        lines = chunks.split("\n")
+        filtered = [l for l in lines if not any(m in l.lower() for m in ["draft", "unapproved", "pending review"])]
+        return "\n".join(filtered)
+    except Exception:
+        logger.exception("filter_draft_chunks | FAILED — returning original chunks")
+        return _get_chunks_text(context)
 
-
-# ---------------------------------------------------------------------------
-# Output rail actions
-# ---------------------------------------------------------------------------
 
 @action()
 async def detect_legal_medical_advice(context: Optional[dict] = None) -> bool:
-    """Pattern-matches unauthorized legal/medical advice in the bot's draft response."""
-    response = _get_bot_text(context).lower()
-    advice_markers = [
-        "you should sue", "you have a right to", "legal claim", "lawsuit",
-        "take this medication", "diagnosis", "prescription",
-        "disability determination", "medical condition",
-    ]
-    return any(marker in response for marker in advice_markers)
+    try:
+        response = _get_bot_text(context).lower()
+        markers = ["you should sue", "you have a right to", "legal claim", "lawsuit",
+                   "take this medication", "diagnosis", "prescription",
+                   "disability determination", "medical condition"]
+        result = any(m in response for m in markers)
+        if result:
+            logger.warning("detect_legal_medical_advice | advice marker found in bot response")
+        return result
+    except Exception:
+        logger.exception("detect_legal_medical_advice | FAILED — defaulting to False")
+        return False
