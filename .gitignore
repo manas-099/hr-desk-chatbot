@@ -17,3 +17,5 @@ backend/scripts/
 .cache/
 ## logs 
 backend/logs/
+
+backend/app/rag/notebooks/
